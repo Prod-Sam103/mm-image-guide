@@ -139,18 +139,139 @@ def page_title(url):
 
 def slot_kind(row):
     desktop_w, desktop_h = display_size(row, "desktop")
-    ratio = decimal_ratio(desktop_w, desktop_h)
+    mobile_w, mobile_h = display_size(row, "mobile")
+    original_w = int(row.get("originalWidth") or 0)
+    largest_w = max(desktop_w, mobile_w)
+    largest_h = max(desktop_h, mobile_h)
+    desktop_ratio = decimal_ratio(desktop_w, desktop_h)
+    mobile_ratio = decimal_ratio(mobile_w, mobile_h)
+    ratio = recommendation_ratio(row)
     if desktop_w >= 900 and desktop_h >= 260:
         return "Hero / banner"
-    if desktop_h >= 500 and ratio < 1:
+    if largest_h >= 500 and ratio < 1:
         return "Portrait feature"
-    if 1.45 <= ratio <= 1.95 and desktop_w >= 250:
-        return "Card / listing image"
-    if 2.0 <= ratio <= 2.5 and desktop_w >= 250:
-        return "Wide card / banner"
-    if 0.85 <= ratio <= 1.2:
+    if (
+        (0.85 <= desktop_ratio <= 1.2 and desktop_w >= 90 and desktop_h >= 90)
+        or (0.85 <= mobile_ratio <= 1.2 and mobile_w >= 90 and mobile_h >= 90)
+    ):
         return "Square / product image"
+    if 1.35 <= ratio <= 1.95 and (largest_w >= 250 or original_w >= 450):
+        return "Card / listing image"
+    if 2.0 <= ratio <= 2.6 and (largest_w >= 250 or original_w >= 450):
+        return "Wide card / banner"
     return "Content image"
+
+
+def recommendation_ratio(row):
+    desktop_w, desktop_h = display_size(row, "desktop")
+    mobile_w, mobile_h = display_size(row, "mobile")
+    original_w = int(row.get("originalWidth") or 0)
+    original_h = int(row.get("originalHeight") or 0)
+    desktop_ratio = decimal_ratio(desktop_w, desktop_h)
+    mobile_ratio = decimal_ratio(mobile_w, mobile_h)
+    original_ratio = decimal_ratio(original_w, original_h)
+
+    if desktop_w >= 250 and desktop_h >= 180 and desktop_ratio:
+        return desktop_ratio
+    if original_ratio:
+        return original_ratio
+    if mobile_ratio:
+        return mobile_ratio
+    return desktop_ratio
+
+
+def dimensions_from_ratio(width, ratio):
+    if not width or not ratio:
+        return 0, 0
+    return rounded_up(width), rounded_up(width / ratio)
+
+
+def snap_design_ratio(ratio, slot):
+    if not ratio:
+        return ratio
+    common_ratios = [
+        (1.0, "Square / product image"),
+        (1.5, "Card / listing image"),
+        (16 / 9, None),
+        (4 / 3, None),
+        (2.0, "Wide card / banner"),
+    ]
+    for target, preferred_slot in common_ratios:
+        if preferred_slot and slot != preferred_slot:
+            continue
+        if abs(ratio - target) / target <= 0.04:
+            return target
+    return ratio
+
+
+def parse_size(size_text):
+    if not size_text or " x " not in size_text:
+        return 0, 0
+    width, rest = size_text.split(" x ", 1)
+    height = rest.replace("px", "")
+    return int(width or 0), int(height or 0)
+
+
+def design_brief(row):
+    desktop_w, desktop_h = display_size(row, "desktop")
+    mobile_w, mobile_h = display_size(row, "mobile")
+    original_w = int(row.get("originalWidth") or 0)
+    original_h = int(row.get("originalHeight") or 0)
+    slot = row.get("slotKind") or slot_kind(row)
+    ratio_value = snap_design_ratio(recommendation_ratio(row), slot)
+
+    if not ratio_value and not (original_w and original_h):
+        return {
+            "designSize": "",
+            "minimumSize": "",
+            "designRatio": "",
+            "plainInstruction": "Use the current image proportions as the design reference.",
+            "mobileInstruction": "",
+            "displayInstruction": "",
+            "oversized": False,
+            "webReadyNote": "",
+        }
+
+    if slot == "Hero / banner":
+        design_w = 2880
+        min_w = max(1440, rounded_up(desktop_w))
+    elif slot == "Square / product image":
+        design_w = design_h = 1000
+        min_w = min_h = 800
+        ratio_value = 1
+    elif slot == "Portrait feature":
+        design_w = 1000
+        min_w = 700
+    elif slot == "Wide card / banner":
+        design_w = 1600
+        min_w = 1020
+    else:
+        design_w = 1200
+        min_w = 960
+
+    if slot != "Square / product image":
+        design_w, design_h = dimensions_from_ratio(design_w, ratio_value)
+        min_w, min_h = dimensions_from_ratio(min_w, ratio_value)
+
+    ratio = ratio_text(design_w, design_h)
+    mobile_note = f"Mobile display: {mobile_w} x {mobile_h}px" if mobile_w and mobile_h else ""
+    desktop_note = f"Desktop display: {desktop_w} x {desktop_h}px" if desktop_w and desktop_h else ""
+    display_note = " | ".join(note for note in (desktop_note, mobile_note) if note)
+    oversized = bool(original_w and original_h and original_w >= design_w * 2 and original_h >= design_h * 2)
+    web_ready_note = ""
+    if oversized:
+        web_ready_note = f"Oversized source; export a web-ready version at {design_w} x {design_h}px before upload."
+
+    return {
+        "designSize": f"{design_w} x {design_h}px",
+        "minimumSize": f"{min_w} x {min_h}px",
+        "designRatio": ratio,
+        "plainInstruction": f"Design / upload at {design_w} x {design_h}px ({ratio}).",
+        "mobileInstruction": mobile_note,
+        "displayInstruction": display_note,
+        "oversized": oversized,
+        "webReadyNote": web_ready_note,
+    }
 
 
 def ideal_guidance(row):
@@ -158,58 +279,32 @@ def ideal_guidance(row):
     mobile_w, mobile_h = display_size(row, "mobile")
     original_w = int(row.get("originalWidth") or 0)
     original_h = int(row.get("originalHeight") or 0)
-
-    min_w = rounded_up(desktop_w)
-    min_h = rounded_up(desktop_h)
-    sharp_w = rounded_up(desktop_w * 2)
-    sharp_h = rounded_up(desktop_h * 2)
-    desktop_ratio = row.get("desktopRatio") or ratio_text(desktop_w, desktop_h)
+    design_w, design_h = parse_size(row.get("designSize", ""))
+    min_w, min_h = parse_size(row.get("minimumSize", ""))
+    design_ratio = row.get("designRatio") or ratio_text(design_w, design_h)
 
     notes = []
+    if design_w and design_h:
+        notes.append(f"Design/upload at {design_w} x {design_h}px ({design_ratio}).")
+    if min_w and min_h:
+        notes.append(f"Minimum practical export: {min_w} x {min_h}px.")
     if desktop_w and desktop_h:
-        notes.append(f"Design at {desktop_ratio}. Minimum export: {min_w} x {min_h}px.")
-        notes.append(f"For sharper uploads, use around {sharp_w} x {sharp_h}px.")
+        notes.append(f"Desktop displays near {desktop_w} x {desktop_h}px.")
     if mobile_w and mobile_h:
-        notes.append(f"Mobile renders near {mobile_w} x {mobile_h}px.")
-    if original_w and desktop_w and (original_w < desktop_w or original_h < desktop_h):
-        notes.append("Current asset is smaller than the desktop display size.")
+        notes.append(f"Mobile displays near {mobile_w} x {mobile_h}px.")
+    if row.get("oversized"):
+        notes.append(row["webReadyNote"])
+    elif original_w and original_h and min_w and min_h and (original_w < min_w or original_h < min_h):
+        notes.append("Current site file may be a generated display variant; use the recommended size when replacing artwork.")
 
     asset_ratio = decimal_ratio(original_w, original_h)
-    display_ratio = decimal_ratio(desktop_w, desktop_h)
-    if asset_ratio and display_ratio:
-        delta = abs(asset_ratio - display_ratio) / display_ratio
+    guide_ratio = decimal_ratio(design_w, design_h)
+    if asset_ratio and guide_ratio:
+        delta = abs(asset_ratio - guide_ratio) / guide_ratio
         if delta > 0.18:
-            notes.append("Asset ratio differs from the display slot; future artwork should match the slot ratio.")
+            notes.append("Current asset ratio differs from the recommended design ratio; future artwork may crop or leave awkward spacing.")
 
     return " ".join(notes)
-
-
-def design_brief(row):
-    desktop_w, desktop_h = display_size(row, "desktop")
-    mobile_w, mobile_h = display_size(row, "mobile")
-    if not desktop_w or not desktop_h:
-        return {
-            "designSize": "",
-            "minimumSize": "",
-            "designRatio": "",
-            "plainInstruction": "Use the current image proportions as the design reference.",
-            "mobileInstruction": "",
-        }
-
-    design_w = rounded_up(desktop_w * 2)
-    design_h = rounded_up(desktop_h * 2)
-    min_w = rounded_up(desktop_w)
-    min_h = rounded_up(desktop_h)
-    ratio = row.get("desktopRatio") or ratio_text(desktop_w, desktop_h)
-    mobile_note = f"Mobile: {mobile_w} x {mobile_h}px" if mobile_w and mobile_h else ""
-
-    return {
-        "designSize": f"{design_w} x {design_h}px",
-        "minimumSize": f"{min_w} x {min_h}px",
-        "designRatio": ratio,
-        "plainInstruction": f"Design this artwork at {design_w} x {design_h}px ({ratio}).",
-        "mobileInstruction": mobile_note,
-    }
 
 
 def normalize_rows(data):
@@ -237,17 +332,21 @@ def normalize_rows(data):
         row["desktopSize"] = f"{desktop_w} x {desktop_h}px" if desktop_w and desktop_h else ""
         row["mobileSize"] = f"{mobile_w} x {mobile_h}px" if mobile_w and mobile_h else ""
         row["originalSize"] = f"{original_w} x {original_h}px" if original_w and original_h else ""
-        row["idealGuidance"] = ideal_guidance(row)
         row.update(design_brief(row))
+        row["idealGuidance"] = ideal_guidance(row)
         row["ratioMismatch"] = False
         row["undersized"] = False
-        if original_w and original_h and desktop_w and desktop_h:
-            row["undersized"] = original_w < desktop_w or original_h < desktop_h
-            display_ratio = desktop_w / desktop_h
+        design_w, design_h = parse_size(row.get("designSize", ""))
+        max_display_w = max(desktop_w, mobile_w)
+        max_display_h = max(desktop_h, mobile_h)
+        if original_w and original_h and max_display_w and max_display_h:
+            row["undersized"] = original_w < max_display_w or original_h < max_display_h
+        if original_w and original_h and design_w and design_h:
+            display_ratio = design_w / design_h
             asset_ratio = original_w / original_h
             row["ratioMismatch"] = abs(asset_ratio - display_ratio) / display_ratio > 0.18
         row["missingAlt"] = not bool((row.get("altText") or "").strip())
-        row["watchlist"] = row["undersized"] or row["ratioMismatch"] or row["missingAlt"]
+        row["watchlist"] = row["undersized"] or row["ratioMismatch"] or row["missingAlt"] or row.get("oversized", False)
         rows.append(row)
 
     page_rank = {name: index for index, name in enumerate(PAGE_ORDER)}
@@ -258,22 +357,20 @@ def normalize_rows(data):
 def recommended_sizes(rows):
     groups = defaultdict(list)
     for row in rows:
-        desktop_w, desktop_h = display_size(row, "desktop")
-        if desktop_w and desktop_h:
-            groups[row.get("desktopRatio") or ratio_text(desktop_w, desktop_h)].append(row)
+        if row.get("designSize") and row.get("designRatio"):
+            key = (row["slotKind"], row["designSize"], row["designRatio"], row.get("minimumSize", ""))
+            groups[key].append(row)
 
     recs = []
-    for ratio, group in groups.items():
-        max_w = max(int(row.get("desktopWidth") or 0) for row in group)
-        max_h = max(int(row.get("desktopHeight") or 0) for row in group)
+    for (slot, design_size, ratio, minimum), group in groups.items():
         recs.append(
             {
                 "ratio": ratio,
                 "count": len(group),
-                "slotKind": Counter(row["slotKind"] for row in group).most_common(1)[0][0],
-                "minimum": f"{rounded_up(max_w)} x {rounded_up(max_h)}px",
-                "recommended": f"{rounded_up(max_w * 2)} x {rounded_up(max_h * 2)}px",
-                "instruction": f"Design at {rounded_up(max_w * 2)} x {rounded_up(max_h * 2)}px",
+                "slotKind": slot,
+                "minimum": minimum,
+                "recommended": design_size,
+                "instruction": f"Design / upload at {design_size}",
                 "examplePage": group[0]["pageUrl"],
             }
         )
@@ -293,7 +390,9 @@ def issue_rows(rows):
     for row in rows:
         labels = []
         if row["undersized"]:
-            labels.append("Undersized")
+            labels.append("Below display size")
+        if row.get("oversized"):
+            labels.append("Oversized source")
         if row["ratioMismatch"]:
             labels.append("Ratio mismatch")
         if row["missingAlt"]:
@@ -330,13 +429,13 @@ def pages_with_no_content_images(data, rows):
 
 
 def render_summary_cards(payload):
-    ratio = Counter(row.get("desktopRatio") or "Unknown" for row in payload["contentRows"]).most_common(1)
+    ratio = Counter(row.get("designRatio") or "Unknown" for row in payload["contentRows"]).most_common(1)
     most_common_ratio = ratio[0][0] if ratio else "n/a"
     cards = [
         ("Pages crawled", payload["pagesCrawled"]),
         ("Content images", payload["contentImageCount"]),
         ("Unique assets", payload["uniqueContentAssets"]),
-        ("Top desktop ratio", most_common_ratio),
+        ("Top design ratio", most_common_ratio),
         ("No content images", len(payload["pagesWithNoContentImages"])),
     ]
     return "\n".join(
@@ -365,7 +464,9 @@ def render_sidebar(rows):
 def render_card(row):
     issue_badges = []
     if row["undersized"]:
-        issue_badges.append('<span class="badge warn">Undersized</span>')
+        issue_badges.append('<span class="badge warn">Below display size</span>')
+    if row.get("oversized"):
+        issue_badges.append('<span class="badge warn">Oversized source</span>')
     if row["ratioMismatch"]:
         issue_badges.append('<span class="badge warn">Ratio mismatch</span>')
     if row["missingAlt"]:
@@ -386,15 +487,17 @@ def render_card(row):
         <h3>{esc(row['fileName'])}</h3>
         <p class="alt">{esc(row.get('altText') or 'No alt text supplied')}</p>
         <div class="design-callout">
-          <span>Design this</span>
+          <span>Design / upload at</span>
           <strong>{esc(row['designSize'])}</strong>
           <em>{esc(row.get('designRatio') or '')}</em>
         </div>
         <div class="detail-strip">
-          <span>Minimum {esc(row['minimumSize'])}</span>
-          <span>Current file {esc(row['originalSize'])}</span>
-          <span>{esc(row['mobileInstruction'])}</span>
+          <span>Minimum practical {esc(row['minimumSize'])}</span>
+          <span>Current site file {esc(row['originalSize'])}</span>
+          <span>{esc(row.get('desktopSize') and 'Desktop display ' + row['desktopSize'] or '')}</span>
+          <span>{esc(row.get('mobileSize') and 'Mobile display ' + row['mobileSize'] or '')}</span>
         </div>
+        <p class="guidance">{esc(row['idealGuidance'])}</p>
         <div class="links">
           <a href="{esc(page)}" target="_blank" rel="noreferrer">Open page</a>
           <a href="{esc(source)}" target="_blank" rel="noreferrer">Open image</a>
@@ -460,7 +563,7 @@ def render_recommended_sizes(recs):
         <span>Give this to the designer</span>
         <h2>Design Recipes</h2>
       </div>
-      <p class="section-copy">Use the “Design at” size as the artwork canvas. The minimum size is the smallest acceptable export, but the design size gives sharper results on modern screens.</p>
+      <p class="section-copy">Use the “Design / upload at” size as the artwork canvas. Rendered desktop and mobile measurements on cards are display evidence only; they are not the design canvas.</p>
       <table>
         <thead><tr><th>Image Use</th><th>Design At</th><th>Ratio</th><th>Minimum</th><th>Used In</th><th>Example</th></tr></thead>
         <tbody>{rows}</tbody>
