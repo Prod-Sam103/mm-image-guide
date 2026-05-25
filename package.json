@@ -1,0 +1,15 @@
+{
+  "name": "mm-image-guide",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Auto-refreshing Mikano Motors content image design guide.",
+  "type": "module",
+  "scripts": {
+    "crawl": "node scripts/mikano_image_crawler.mjs",
+    "build": "python3 scripts/build_mikano_content_image_guide.py",
+    "refresh": "npm run crawl && npm run build"
+  },
+  "dependencies": {
+    "playwright": "^1.60.0"
+  }
+}

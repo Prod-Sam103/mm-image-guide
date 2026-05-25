@@ -1,0 +1,66 @@
+name: Refresh Image Guide
+
+on:
+  workflow_dispatch:
+  schedule:
+    # GitHub cron runs in UTC. This is Monday 7:00 AM WAT/Lagos.
+    - cron: "0 6 * * 1"
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  refresh-and-deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Node dependencies
+        run: npm ci
+
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Refresh guide from live site
+        env:
+          MIKANO_OUTPUT_DIR: public
+          MIKANO_WORKFLOW_URL: https://github.com/Prod-Sam103/mm-image-guide/actions/workflows/refresh-image-guide.yml
+          MIKANO_PAGES_URL: https://prod-sam103.github.io/mm-image-guide/
+        run: npm run refresh
+
+      - name: Remove crawler-only artifact from public deploy
+        run: rm -f public/mikano-image-crawl.json
+
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: public
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
