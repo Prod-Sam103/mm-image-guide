@@ -30,23 +30,28 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Setup Node
+        if: github.event_name != 'push'
         uses: actions/setup-node@v4
         with:
           node-version: "20"
           cache: npm
 
       - name: Setup Python
+        if: github.event_name != 'push'
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
 
       - name: Install Node dependencies
+        if: github.event_name != 'push'
         run: npm ci
 
       - name: Install Playwright Chromium
+        if: github.event_name != 'push'
         run: npx playwright install --with-deps chromium
 
       - name: Refresh guide from live site
+        if: github.event_name != 'push'
         env:
           MIKANO_OUTPUT_DIR: public
           MIKANO_WORKFLOW_URL: https://github.com/Prod-Sam103/mm-image-guide/actions/workflows/refresh-image-guide.yml

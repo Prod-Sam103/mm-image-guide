@@ -12,6 +12,7 @@ OUTPUT_DIR = Path(os.environ.get("MIKANO_OUTPUT_DIR", "public"))
 INPUT_JSON = OUTPUT_DIR / "mikano-image-crawl.json"
 OUTPUT_HTML = OUTPUT_DIR / "index.html"
 OUTPUT_JSON = OUTPUT_DIR / "mikano-content-image-guide-data.json"
+MIN_CONTENT_ROWS = int(os.environ.get("MIKANO_MIN_CONTENT_ROWS", "1"))
 WORKFLOW_URL = os.environ.get(
     "MIKANO_WORKFLOW_URL",
     "https://github.com/Prod-Sam103/mm-image-guide/actions/workflows/refresh-image-guide.yml",
@@ -881,13 +882,18 @@ def render_html(payload):
 def main():
     data = json.loads(INPUT_JSON.read_text())
     rows = normalize_rows(data)
+    print(f"All image rows: {len(data['imageRows'])}")
+    print(f"Content guide rows: {len(rows)}")
+    print(f"Minimum content rows: {MIN_CONTENT_ROWS}")
+    if len(rows) < MIN_CONTENT_ROWS:
+        raise SystemExit(
+            f"Content guide rows below minimum threshold ({len(rows)} < {MIN_CONTENT_ROWS}); refusing to write empty guide."
+        )
     recs = recommended_sizes(rows)
     issues = issue_rows(rows)
     payload = write_filtered_json(data, rows, recs, issues)
     OUTPUT_HTML.write_text(render_html(payload))
 
-    print(f"All image rows: {len(data['imageRows'])}")
-    print(f"Content guide rows: {len(rows)}")
     print(f"Unique content assets: {payload['uniqueContentAssets']}")
     print(f"Watchlist rows: {len(issues)}")
     print(f"HTML: {OUTPUT_HTML}")
